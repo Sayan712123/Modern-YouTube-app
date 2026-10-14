@@ -1,0 +1,6 @@
+{
+  "name": "YouTube for Android",
+  "description": "The official YouTube Android experience featuring Home feed, Shorts, Subscriptions, Library, Cast to TV, gesture navigation, and interactive video playback.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
