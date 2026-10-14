@@ -1,523 +1,135 @@
-import React, { useState } from 'react';
-import { 
-  NavTab, 
-  DeviceMode, 
-  NavigationStyle, 
-  Video, 
-  Short, 
-  Channel, 
-  Playlist, 
-  NotificationItem 
-} from './types/youtube';
-import { 
-  INITIAL_VIDEOS, 
-  INITIAL_SHORTS, 
-  INITIAL_CHANNELS, 
-  INITIAL_PLAYLISTS, 
-  INITIAL_NOTIFICATIONS 
-} from './data/mockData';
+import React, { useEffect, useState } from 'react';
+import { Home, Layers, Search, User, Flame } from 'lucide-react';
+import { YTVideo, YTChannel, getKey, useLocal } from './services/ytApi';
+import { FeedScreen, SearchScreen, ShortsScreen, SubsScreen, LibraryScreen, KeyScreen } from './components/Screens';
+import { Watch } from './components/Watch';
 
-// Components
-import { AndroidFrame } from './components/AndroidFrame';
-import { TopBar } from './components/TopBar';
-import { BottomNav } from './components/BottomNav';
-import { HomeFeed } from './components/HomeFeed';
-import { VideoPlayerModal } from './components/VideoPlayerModal';
-import { MiniPlayer } from './components/MiniPlayer';
-import { ShortsFeed } from './components/ShortsFeed';
-import { SubscriptionsView } from './components/SubscriptionsView';
-import { YouView } from './components/YouView';
-import { SearchModal } from './components/SearchModal';
-import { CastModal } from './components/CastModal';
-import { CreateModal } from './components/CreateModal';
-import { NotificationsModal } from './components/NotificationsModal';
-import { SettingsModal } from './components/SettingsModal';
-import { ShareSheetModal } from './components/ShareSheetModal';
-import { ApkDownloadModal } from './components/ApkDownloadModal';
-import { Android13MediaNotification } from './components/Android13MediaNotification';
-import { GitHubPublishModal } from './components/GitHubPublishModal';
+type Tab = 'home' | 'shorts' | 'subs' | 'you';
+type Overlay = 'search' | 'watch' | 'key';
 
 export default function App() {
-  // Device & Navigation state
-  const [deviceMode, setDeviceMode] = useState<DeviceMode>('phone');
-  const [navStyle, setNavStyle] = useState<NavigationStyle>('gestures');
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
-  const [isIncognito, setIsIncognito] = useState<boolean>(false);
-  const [currentTab, setCurrentTab] = useState<NavTab>('home');
-  const [isApkModalOpen, setIsApkModalOpen] = useState<boolean>(false);
-  const [isMediaNotifOpen, setIsMediaNotifOpen] = useState<boolean>(false);
-  const [isGitHubModalOpen, setIsGitHubModalOpen] = useState<boolean>(false);
+  const [hasKey, setHasKey] = useState<boolean>(!!getKey());
+  const [tab, setTab] = useState<Tab>('home');
+  const [stack, setStack] = useState<Overlay[]>([]);
+  const [video, setVideo] = useState<YTVideo | null>(null);
+  const [feed, setFeed] = useState<YTVideo[]>([]);
 
-  // Application Data state
-  const [videos, setVideos] = useState<Video[]>(INITIAL_VIDEOS);
-  const [shorts, setShorts] = useState<Short[]>(INITIAL_SHORTS);
-  const [channels, setChannels] = useState<Channel[]>(INITIAL_CHANNELS);
-  const [playlists, setPlaylists] = useState<Playlist[]>(INITIAL_PLAYLISTS);
-  const [notifications, setNotifications] = useState<NotificationItem[]>(INITIAL_NOTIFICATIONS);
-  const [historyVideos, setHistoryVideos] = useState<Video[]>([INITIAL_VIDEOS[0], INITIAL_VIDEOS[2]]);
-  const [downloadedVideos, setDownloadedVideos] = useState<Video[]>([INITIAL_VIDEOS[1]]);
-  const [subscribedChannelIds, setSubscribedChannelIds] = useState<string[]>([
-    'ch-tech',
-    'ch-game',
-    'ch-nature',
-    'ch-dev'
-  ]);
+  const [history, setHistory] = useLocal<YTVideo[]>('yt_history', []);
+  const [saved, setSaved] = useLocal<YTVideo[]>('yt_saved', []);
+  const [liked, setLiked] = useLocal<YTVideo[]>('yt_liked', []);
+  const [subs, setSubs] = useLocal<YTChannel[]>('yt_subs', []);
 
-  // Video Player state
-  const [activeVideo, setActiveVideo] = useState<Video | null>(null);
-  const [isPlayerMinimized, setIsPlayerMinimized] = useState<boolean>(false);
-  const [isMiniPlaying, setIsMiniPlaying] = useState<boolean>(true);
+  // Android back button: close the top overlay (history-based)
+  useEffect(() => {
+    const onPop = () => setStack((s) => s.slice(0, -1));
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
-  // Overlay Modals
-  const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
-  const [isCastOpen, setIsCastOpen] = useState<boolean>(false);
-  const [isCreateOpen, setIsCreateOpen] = useState<boolean>(false);
-  const [isNotificationsOpen, setIsNotificationsOpen] = useState<boolean>(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
-  const [shareTarget, setShareTarget] = useState<Video | Short | null>(null);
+  const openOverlay = (o: Overlay) => {
+    window.history.pushState({ o }, '');
+    setStack((s) => [...s, o]);
+  };
+  const closeTop = () => window.history.back();
 
-  // Select video handler
-  const handleSelectVideo = (video: Video) => {
-    setActiveVideo(video);
-    setIsPlayerMinimized(false);
-    setIsMiniPlaying(true);
-
-    // Add to history if not incognito
-    if (!isIncognito) {
-      setHistoryVideos((prev) => {
-        const filtered = prev.filter((v) => v.id !== video.id);
-        return [video, ...filtered];
-      });
-    }
+  const openVideo = (v: YTVideo) => {
+    setVideo(v);
+    setHistory((h) => [v, ...h.filter((x) => x.id !== v.id)].slice(0, 50));
+    if (!stack.includes('watch')) openOverlay('watch');
   };
 
-  // Shorts select handler
-  const handleSelectShort = (short: Short) => {
-    setCurrentTab('shorts');
-  };
+  const toggleSave = (v: YTVideo) =>
+    setSaved((s) => (s.some((x) => x.id === v.id) ? s.filter((x) => x.id !== v.id) : [v, ...s]));
+  const toggleLike = (v: YTVideo) =>
+    setLiked((s) => (s.some((x) => x.id === v.id) ? s.filter((x) => x.id !== v.id) : [v, ...s]));
+  const toggleSub = (c: YTChannel) =>
+    setSubs((s) => (s.some((x) => x.id === c.id) ? s.filter((x) => x.id !== c.id) : [c, ...s]));
 
-  // Toggle Like on video
-  const handleToggleLike = (videoId: string) => {
-    setVideos((prev) =>
-      prev.map((v) => {
-        if (v.id === videoId) {
-          const isLiked = !v.isLiked;
-          return {
-            ...v,
-            isLiked,
-            isDisliked: false,
-            likeCountNum: isLiked ? v.likeCountNum + 1 : v.likeCountNum - 1,
-          };
-        }
-        return v;
-      })
-    );
+  const savedIds = saved.map((v) => v.id);
 
-    if (activeVideo && activeVideo.id === videoId) {
-      const isLiked = !activeVideo.isLiked;
-      setActiveVideo({
-        ...activeVideo,
-        isLiked,
-        isDisliked: false,
-        likeCountNum: isLiked ? activeVideo.likeCountNum + 1 : activeVideo.likeCountNum - 1,
-      });
-    }
-  };
+  if (!hasKey) return <KeyScreen onDone={() => setHasKey(true)} />;
 
-  // Toggle Dislike on video
-  const handleToggleDislike = (videoId: string) => {
-    setVideos((prev) =>
-      prev.map((v) => {
-        if (v.id === videoId) {
-          return {
-            ...v,
-            isDisliked: !v.isDisliked,
-            isLiked: false,
-          };
-        }
-        return v;
-      })
-    );
-  };
-
-  // Toggle channel subscription
-  const handleToggleSubscribe = (channelId: string) => {
-    setSubscribedChannelIds((prev) =>
-      prev.includes(channelId)
-        ? prev.filter((id) => id !== channelId)
-        : [...prev, channelId]
-    );
-  };
-
-  // Save to Watch Later
-  const handleSaveToWatchLater = (video: Video) => {
-    setPlaylists((prev) =>
-      prev.map((pl) => {
-        if (pl.id === 'pl-later') {
-          const exists = pl.videos.some((v) => v.id === video.id);
-          const updated = exists ? pl.videos : [video, ...pl.videos];
-          return {
-            ...pl,
-            videoCount: updated.length,
-            videos: updated,
-          };
-        }
-        return pl;
-      })
-    );
-  };
-
-  // Download video
-  const handleDownloadVideo = (video: Video) => {
-    setDownloadedVideos((prev) => {
-      if (prev.some((v) => v.id === video.id)) return prev;
-      return [video, ...prev];
-    });
-  };
-
-  // Add public comment to video
-  const handleAddComment = (videoId: string, text: string) => {
-    const newComment = {
-      id: `c-user-${Date.now()}`,
-      authorName: 'Alex Chen',
-      authorAvatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=120&q=80',
-      content: text,
-      timestamp: 'Just now',
-      likes: 1,
-      replyCount: 0,
-    };
-
-    setVideos((prev) =>
-      prev.map((v) =>
-        v.id === videoId
-          ? {
-              ...v,
-              comments: [newComment, ...v.comments],
-            }
-          : v
-      )
-    );
-
-    if (activeVideo && activeVideo.id === videoId) {
-      setActiveVideo({
-        ...activeVideo,
-        comments: [newComment, ...activeVideo.comments],
-      });
-    }
-  };
-
-  // Create new playlist
-  const handleCreatePlaylist = (title: string, isPrivate: boolean) => {
-    const newPl: Playlist = {
-      id: `pl-${Date.now()}`,
-      title,
-      isPrivate,
-      videoCount: 0,
-      thumbnail: '/src/assets/images/yt_tech_review_thumb_1791997282311.jpg',
-      updatedAt: 'Created just now',
-      videos: [],
-    };
-    setPlaylists((prev) => [newPl, ...prev]);
-  };
-
-  // Clear history
-  const handleClearHistory = () => {
-    setHistoryVideos([]);
-  };
-
-  // Add new video from upload sheet
-  const handleAddNewVideo = (newVideo: Video) => {
-    setVideos((prev) => [newVideo, ...prev]);
-  };
-
-  // Mark all notifications read
-  const handleMarkAllNotificationsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-  };
-
-  // Android System Navigation Handlers
-  const handleSystemBack = () => {
-    // 1. Close overlays
-    if (isGitHubModalOpen) {
-      setIsGitHubModalOpen(false);
-      return;
-    }
-    if (isMediaNotifOpen) {
-      setIsMediaNotifOpen(false);
-      return;
-    }
-    if (isApkModalOpen) {
-      setIsApkModalOpen(false);
-      return;
-    }
-    if (shareTarget) {
-      setShareTarget(null);
-      return;
-    }
-    if (isSearchOpen) {
-      setIsSearchOpen(false);
-      return;
-    }
-    if (isCastOpen) {
-      setIsCastOpen(false);
-      return;
-    }
-    if (isCreateOpen) {
-      setIsCreateOpen(false);
-      return;
-    }
-    if (isNotificationsOpen) {
-      setIsNotificationsOpen(false);
-      return;
-    }
-    if (isSettingsOpen) {
-      setIsSettingsOpen(false);
-      return;
-    }
-    // 2. Minimize full video player
-    if (activeVideo && !isPlayerMinimized) {
-      setIsPlayerMinimized(true);
-      return;
-    }
-    // 3. Return to Home tab if on another tab
-    if (currentTab !== 'home') {
-      setCurrentTab('home');
-      return;
-    }
-  };
-
-  const handleSystemHome = () => {
-    // Android Home Button: closes overlays, minimizes player, switches to home
-    setIsGitHubModalOpen(false);
-    setIsMediaNotifOpen(false);
-    setIsApkModalOpen(false);
-    setShareTarget(null);
-    setIsSearchOpen(false);
-    setIsCastOpen(false);
-    setIsCreateOpen(false);
-    setIsNotificationsOpen(false);
-    setIsSettingsOpen(false);
-    if (activeVideo && !isPlayerMinimized) {
-      setIsPlayerMinimized(true);
-    }
-    setCurrentTab('home');
-  };
-
-  const handleSystemRecents = () => {
-    // Toggle recent apps feel or minimize
-    if (activeVideo && !isPlayerMinimized) {
-      setIsPlayerMinimized(true);
-    }
-  };
-
-  const unreadNotifsCount = notifications.filter((n) => !n.isRead).length;
+  const navBtn = (t: Tab, label: string, icon: React.ReactNode) => (
+    <button
+      onClick={() => setTab(t)}
+      className={`flex-1 min-h-[44px] flex flex-col items-center justify-center ${tab === t ? 'text-white' : 'text-zinc-400'}`}
+    >
+      {icon}
+      <span className="text-[10px] font-medium mt-1">{label}</span>
+    </button>
+  );
 
   return (
-    <AndroidFrame
-      deviceMode={deviceMode}
-      setDeviceMode={setDeviceMode}
-      navStyle={navStyle}
-      setNavStyle={setNavStyle}
-      isDarkMode={isDarkMode}
-      setIsDarkMode={setIsDarkMode}
-      isIncognito={isIncognito}
-      setIsIncognito={setIsIncognito}
-      onOpenApkModal={() => setIsApkModalOpen(true)}
-      onOpenMediaNotification={() => setIsMediaNotifOpen(true)}
-      onOpenGitHubModal={() => setIsGitHubModalOpen(true)}
-      onSystemBack={handleSystemBack}
-      onSystemHome={handleSystemHome}
-      onSystemRecents={handleSystemRecents}
+    <div
+      className="fixed inset-0 flex flex-col bg-[#0f0f0f] overflow-hidden select-none"
+      style={{ paddingTop: 'env(safe-area-inset-top, 0px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
     >
-      {/* YouTube Android App Container */}
-      <div className="w-full h-full flex flex-col bg-[#0f0f0f] relative overflow-hidden select-none">
-        
-        {/* Top App Bar (Hidden during full-bleed Shorts tab to match Android YouTube) */}
-        {currentTab !== 'shorts' && (
-          <TopBar
-            onOpenCast={() => setIsCastOpen(true)}
-            onOpenNotifications={() => setIsNotificationsOpen(true)}
-            onOpenSearch={() => setIsSearchOpen(true)}
-            onOpenProfile={() => setCurrentTab('you')}
-            onOpenApk={() => setIsApkModalOpen(true)}
-            unreadCount={unreadNotifsCount}
-            isIncognito={isIncognito}
-            isPremium={true}
+      {tab !== 'shorts' && (
+        <header className="w-full h-12 px-4 flex items-center justify-between bg-[#0f0f0f] border-b border-zinc-800/40 shrink-0">
+          <div className="flex items-center gap-1.5">
+            <div className="w-7 h-5 bg-red-600 rounded-[6px] flex items-center justify-center">
+              <div className="w-0 h-0 border-t-[3.5px] border-t-transparent border-b-[3.5px] border-b-transparent border-l-[6.5px] border-l-white ml-0.5" />
+            </div>
+            <span className="font-bold text-base tracking-tight text-white">YouTube</span>
+          </div>
+          <button onClick={() => openOverlay('search')} className="w-10 h-10 flex items-center justify-center text-white" aria-label="Search">
+            <Search className="w-5 h-5" />
+          </button>
+        </header>
+      )}
+
+      <div className="flex-1 min-h-0 relative flex flex-col">
+        {tab === 'home' && (
+          <FeedScreen savedIds={savedIds} onOpen={openVideo} onToggleSave={toggleSave} onFeedLoaded={setFeed} onChangeKey={() => openOverlay('key')} />
+        )}
+        {tab === 'shorts' && <ShortsScreen />}
+        {tab === 'subs' && (
+          <SubsScreen subs={subs} savedIds={savedIds} onOpen={openVideo} onToggleSave={toggleSave} onGoHome={() => setTab('home')} />
+        )}
+        {tab === 'you' && (
+          <LibraryScreen
+            history={history}
+            saved={saved}
+            liked={liked}
+            onOpen={openVideo}
+            onClearHistory={() => setHistory([])}
+            onRemoveSaved={toggleSave}
+            onChangeKey={() => openOverlay('key')}
           />
         )}
 
-        {/* Dynamic App Content Views */}
-        <div className="flex-1 w-full overflow-hidden relative flex flex-col">
-          {currentTab === 'home' && (
-            <HomeFeed
-              videos={videos}
-              shorts={shorts}
-              onSelectVideo={handleSelectVideo}
-              onSelectShort={handleSelectShort}
-              onSaveToWatchLater={handleSaveToWatchLater}
-              onDownloadVideo={handleDownloadVideo}
-              onShareVideo={(v) => setShareTarget(v)}
-            />
-          )}
-
-          {currentTab === 'shorts' && (
-            <ShortsFeed
-              shorts={shorts}
-              onToggleSubscribe={handleToggleSubscribe}
-              onShare={(s) => setShareTarget(s)}
-              subscribedChannelIds={subscribedChannelIds}
-            />
-          )}
-
-          {currentTab === 'subscriptions' && (
-            <SubscriptionsView
-              channels={channels}
-              videos={videos}
-              shorts={shorts}
-              onSelectVideo={handleSelectVideo}
-              onSelectShort={handleSelectShort}
-              subscribedChannelIds={subscribedChannelIds}
-              onToggleSubscribe={handleToggleSubscribe}
-            />
-          )}
-
-          {currentTab === 'you' && (
-            <YouView
-              historyVideos={historyVideos}
-              playlists={playlists}
-              downloadedVideos={downloadedVideos}
-              onSelectVideo={handleSelectVideo}
-              onOpenSettings={() => setIsSettingsOpen(true)}
-              onCreatePlaylist={handleCreatePlaylist}
-              onClearHistory={handleClearHistory}
-              isIncognito={isIncognito}
-              onToggleIncognito={() => setIsIncognito(!isIncognito)}
-              onOpenApkModal={() => setIsApkModalOpen(true)}
-              onOpenGitHubModal={() => setIsGitHubModalOpen(true)}
-            />
-          )}
-
-          {/* Floating Android Mini-Player (when minimized) */}
-          {activeVideo && isPlayerMinimized && (
-            <MiniPlayer
-              video={activeVideo}
-              isPlaying={isMiniPlaying}
-              onTogglePlay={() => setIsMiniPlaying(!isMiniPlaying)}
-              onExpand={() => setIsPlayerMinimized(false)}
-              onClose={() => {
-                setActiveVideo(null);
-                setIsPlayerMinimized(false);
-              }}
-            />
-          )}
-
-          {/* Full Screen Interactive Video Player Modal */}
-          {activeVideo && !isPlayerMinimized && (
-            <VideoPlayerModal
-              video={activeVideo}
-              allVideos={videos}
-              onClose={() => setActiveVideo(null)}
-              onMinimize={() => setIsPlayerMinimized(true)}
-              onSelectRelatedVideo={handleSelectVideo}
-              onToggleLike={handleToggleLike}
-              onToggleDislike={handleToggleDislike}
-              onToggleSubscribe={handleToggleSubscribe}
-              onShare={(v) => setShareTarget(v)}
-              onDownload={handleDownloadVideo}
-              onAddComment={handleAddComment}
-              isSubscribed={subscribedChannelIds.includes(activeVideo.channel.id)}
-            />
-          )}
-        </div>
-
-        {/* Bottom Navigation Bar */}
-        <BottomNav
-          currentTab={currentTab}
-          onTabChange={(tab) => setCurrentTab(tab)}
-          onOpenCreate={() => setIsCreateOpen(true)}
-          hasUnreadSubs={true}
-        />
-
-        {/* Overlay Sheets & Modals */}
-        {isSearchOpen && (
-          <SearchModal
-            videos={videos}
-            onClose={() => setIsSearchOpen(false)}
-            onSelectVideo={handleSelectVideo}
+        {stack.includes('search') && (
+          <SearchScreen savedIds={savedIds} onClose={closeTop} onOpen={openVideo} onToggleSave={toggleSave} />
+        )}
+        {stack.includes('watch') && video && (
+          <Watch
+            video={video}
+            upNext={feed}
+            isSubscribed={subs.some((s) => s.id === video.channelId)}
+            isLiked={liked.some((v) => v.id === video.id)}
+            isSaved={savedIds.includes(video.id)}
+            onClose={closeTop}
+            onOpen={openVideo}
+            onToggleSub={toggleSub}
+            onToggleLike={toggleLike}
+            onToggleSave={toggleSave}
           />
         )}
-
-        {isCastOpen && (
-          <CastModal onClose={() => setIsCastOpen(false)} />
-        )}
-
-        {isCreateOpen && (
-          <CreateModal
-            onClose={() => setIsCreateOpen(false)}
-            onAddNewVideo={handleAddNewVideo}
-            onOpenShortsCreator={() => setCurrentTab('shorts')}
-          />
-        )}
-
-        {isNotificationsOpen && (
-          <NotificationsModal
-            notifications={notifications}
-            onClose={() => setIsNotificationsOpen(false)}
-            onSelectNotification={(n) => {
-              const matched = videos.find((v) => v.title === n.videoTitle);
-              if (matched) handleSelectVideo(matched);
-              setIsNotificationsOpen(false);
-            }}
-            onMarkAllAsRead={handleMarkAllNotificationsRead}
-          />
-        )}
-
-        {isSettingsOpen && (
-          <SettingsModal
-            onClose={() => setIsSettingsOpen(false)}
-            isDarkMode={isDarkMode}
-            setIsDarkMode={setIsDarkMode}
-            isIncognito={isIncognito}
-            setIsIncognito={setIsIncognito}
-          />
-        )}
-
-        {shareTarget && (
-          <ShareSheetModal
-            item={shareTarget}
-            onClose={() => setShareTarget(null)}
-          />
-        )}
-
-        {/* Android APK Download & Installation Modal */}
-        {isApkModalOpen && (
-          <ApkDownloadModal 
-            onClose={() => setIsApkModalOpen(false)} 
-            onOpenGitHub={() => setIsGitHubModalOpen(true)}
-          />
-        )}
-
-        {/* GitHub Publish & Actions APK Build Modal */}
-        {isGitHubModalOpen && (
-          <GitHubPublishModal onClose={() => setIsGitHubModalOpen(false)} />
-        )}
-
-        {/* Android 13 Signature Squiggly Media Player Notification Drawer */}
-        {isMediaNotifOpen && (
-          <Android13MediaNotification
-            video={activeVideo || videos[0]}
-            isPlaying={isMiniPlaying}
-            onTogglePlay={() => setIsMiniPlaying(!isMiniPlaying)}
-            onClose={() => setIsMediaNotifOpen(false)}
-            onOpenVideo={() => {
-              if (!activeVideo) setActiveVideo(videos[0]);
-              setIsPlayerMinimized(false);
-              setIsMediaNotifOpen(false);
-            }}
-          />
-        )}
-
       </div>
-    </AndroidFrame>
+
+      <nav className="w-full h-14 bg-[#0f0f0f] border-t border-zinc-800/80 flex items-center justify-around px-2 shrink-0 z-40">
+        {navBtn('home', 'Home', <Home className={`w-5 h-5 ${tab === 'home' ? 'stroke-[2.5px]' : ''}`} />)}
+        {navBtn('shorts', 'Shorts', <Flame className={`w-5 h-5 ${tab === 'shorts' ? 'fill-red-600 text-red-600' : ''}`} />)}
+        <button onClick={() => openOverlay('search')} className="flex-1 min-h-[44px] flex items-center justify-center" aria-label="Search">
+          <div className="w-10 h-10 rounded-full border border-zinc-700 bg-zinc-800/80 flex items-center justify-center text-white active:scale-95">
+            <Search className="w-5 h-5" />
+          </div>
+        </button>
+        {navBtn('subs', 'Subscriptions', <Layers className={`w-5 h-5 ${tab === 'subs' ? 'stroke-[2.5px]' : ''}`} />)}
+        {navBtn('you', 'You', <User className={`w-5 h-5 ${tab === 'you' ? 'stroke-[2.5px]' : ''}`} />)}
+      </nav>
+
+      {stack.includes('key') && <KeyScreen onDone={() => { setHasKey(true); closeTop(); }} onClose={closeTop} />}
+    </div>
   );
 }
