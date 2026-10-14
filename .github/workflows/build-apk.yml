@@ -44,9 +44,9 @@ jobs:
 
       - name: Add Capacitor Android shell
         run: |
-          rm -rf android
+          rm -rf android capacitor.config.ts capacitor.config.js capacitor.config.json
           npm install --no-save --legacy-peer-deps @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
-          npx cap init "YouTube" com.example.youtube --web-dir=dist
+          printf '{\n  "appId": "com.example.youtube",\n  "appName": "YouTube",\n  "webDir": "dist"\n}\n' > capacitor.config.json
           npx cap add android
           npx cap sync android
 
