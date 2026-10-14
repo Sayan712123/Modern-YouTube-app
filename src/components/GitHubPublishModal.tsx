@@ -34,6 +34,102 @@ import {
   runGitHubDiagnostics
 } from '../services/githubService';
 
+export const BULLETPROOF_WORKFLOW_YML = `name: Build Android 13 APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build-apk:
+    name: Build YouTube Android 13 APK
+    runs-on: ubuntu-latest
+
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Gradle Build System
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.2'
+
+      - name: Accept Android SDK Licenses
+        run: |
+          mkdir -p $ANDROID_HOME/licenses || true
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> $ANDROID_HOME/licenses/android-sdk-license || true
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" >> $ANDROID_HOME/licenses/android-sdk-preview-license || true
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || true
+
+      - name: Prepare Keystore for Signing
+        run: |
+          mkdir -p android/app
+          if [ ! -f android/app/debug.keystore ]; then
+            keytool -genkeypair -v -keystore android/app/debug.keystore \\
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \\
+              -storepass android -keypass android \\
+              -dname "CN=YouTube Android 13, OU=Mobile, O=Google, L=MountainView, S=CA, C=US" || true
+          fi
+
+      - name: Build Android 13 APK with Gradle
+        run: |
+          cd android
+          chmod +x gradlew || true
+          if [ -f "./gradlew" ]; then
+            ./gradlew assembleDebug --no-daemon --stacktrace || gradle assembleDebug --no-daemon --stacktrace
+          else
+            gradle assembleDebug --no-daemon --stacktrace
+          fi
+
+      - name: Collect Output APKs
+        run: |
+          mkdir -p output-apk
+          find android/app/build/outputs/apk/ -name "*.apk" -type f -exec cp {} output-apk/YouTube-Android13-API33.apk \\; || \\
+          find android/ -name "*.apk" -type f -exec cp {} output-apk/YouTube-Android13-API33.apk \\; || true
+          echo "APK build outputs ready in output-apk/:"
+          ls -la output-apk/
+
+      - name: Upload APK Artifact to GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: YouTube-Android13-API33-APK
+          path: output-apk/*.apk
+          if-no-files-found: warn
+
+      - name: Create GitHub Release with APK
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        with:
+          tag_name: v13.0.0-android13
+          name: YouTube for Android 13 (API 33)
+          body: |
+            ## YouTube for Android 13 (API 33 - Tiramisu)
+            - **Target SDK**: 33 (Android 13)
+            - **Min SDK**: 26 (Android 8.0+)
+            - **Package**: \`com.google.android.youtube.lite\`
+            - **Features**: Android 13 Media Notification Player, Back Gestures, Shorts player.
+            - **Download**: Grab \`YouTube-Android13-API33.apk\` below!
+          files: output-apk/*.apk
+        env:
+          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+`;
+
 interface GitHubPublishModalProps {
   onClose: () => void;
 }
@@ -61,6 +157,8 @@ export const GitHubPublishModal: React.FC<GitHubPublishModalProps> = ({ onClose 
   const [diagnostic, setDiagnostic] = useState<GitHubDiagnostic | null>(null);
   const [isRunningDiagnostic, setIsRunningDiagnostic] = useState<boolean>(false);
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
+  const [isFixingWorkflow, setIsFixingWorkflow] = useState<boolean>(false);
+  const [workflowFixResult, setWorkflowFixResult] = useState<string | null>(null);
 
   // Load saved token from localStorage
   useEffect(() => {
@@ -343,83 +441,34 @@ dependencies {
 
       // 6. Commit Bulletproof GitHub Actions build-apk.yml
       setPublishProgress((prev) => [...prev, '6/6 Configuring reliable GitHub Actions APK Builder...']);
-      const workflowContent = `name: Build Android 13 APK
-
-on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
-
-permissions:
-  contents: write
-  actions: write
-
-jobs:
-  build-apk:
-    name: Build YouTube Android 13 APK
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Java JDK 17 (Android 13 SDK Compatible)
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Dependencies
-        run: npm install --legacy-peer-deps --no-audit --no-fund || true
-
-      - name: Build Web Application
-        run: npm run build || true
-
-      - name: Build Android APK with Gradle
-        run: |
-          cd android
-          gradle assembleDebug --no-daemon --stacktrace || gradle assembleRelease --no-daemon || echo "Gradle build step finished"
-
-      - name: Collect and Package APK
-        run: |
-          mkdir -p output-apk
-          find android/ -name "*.apk" -type f -exec cp {} output-apk/YouTube-Android13-API33.apk \; || true
-          ls -la output-apk/
-
-      - name: Upload APK to GitHub Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: YouTube-Android13-API33-APK
-          path: output-apk/*.apk
-          if-no-files-found: warn
-
-      - name: Create GitHub Release with APK
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-        continue-on-error: true
-        with:
-          tag_name: v13.0.0-android13
-          name: YouTube for Android 13 (API 33)
-          body: |
-            ## YouTube for Android 13 (API 33 - Tiramisu)
-            - Target SDK: 33 (Android 13)
-            - Min SDK: 26 (Android 8.0+)
-            - Download YouTube-Android13-API33.apk below!
-          files: output-apk/*.apk
-        env:
-          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-`;
       await commitFileToRepo(
         token.trim(),
         currentUser.login,
         repo.name,
         '.github/workflows/build-apk.yml',
-        workflowContent,
-        'Add GitHub Actions Android 13 APK workflow'
+        BULLETPROOF_WORKFLOW_YML,
+        'Add reliable GitHub Actions Android 13 APK workflow'
       );
+
+      // 7. Commit Gradle Wrapper script
+      try {
+        const gradlewContent = `#!/bin/sh
+APP_BASE_NAME=\`basename "$0"\`
+APP_HOME=\`cd "\\\`dirname \\"$0\\"\\\`" > /dev/null && pwd\`
+CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
+exec java -Dorg.gradle.appname=$APP_BASE_NAME -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain "$@"
+`;
+        await commitFileToRepo(
+          token.trim(),
+          currentUser.login,
+          repo.name,
+          'android/gradlew',
+          gradlewContent,
+          'Add gradlew wrapper script'
+        );
+      } catch {
+        // non-fatal
+      }
 
       setPublishProgress((prev) => [...prev, '✓ Successfully published to GitHub! Ready to compile APK.']);
       setIsPublishing(false);
@@ -455,6 +504,35 @@ jobs:
     } catch (err: unknown) {
       setIsTriggeringBuild(false);
       setWorkflowStatus(`Notice: ${err instanceof Error ? err.message : 'Could not trigger automated dispatch. You can trigger it directly in the GitHub Actions tab.'}`);
+    }
+  };
+
+  const handleFixWorkflowInRepo = async () => {
+    if (!token.trim() || !currentUser) {
+      setWorkflowFixResult('Please connect your GitHub account in Step 1 first.');
+      setActiveTab('publish');
+      return;
+    }
+    const targetRepo = publishedRepo?.name || repoName;
+    setIsFixingWorkflow(true);
+    setWorkflowFixResult('1/2 Committing fixed build-apk.yml to repository...');
+    try {
+      await commitFileToRepo(
+        token.trim(),
+        currentUser.login,
+        targetRepo,
+        '.github/workflows/build-apk.yml',
+        BULLETPROOF_WORKFLOW_YML,
+        'Fix: Replace setup-android action with pre-installed Android SDK 33 + Gradle wrapper'
+      );
+      setWorkflowFixResult('2/2 Fixed workflow committed! Dispatching clean GitHub Actions build...');
+      await triggerApkWorkflow(token.trim(), currentUser.login, targetRepo);
+      setWorkflowFixResult('✓ Fix applied & build dispatched! Check GitHub Actions tab now.');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to update workflow';
+      setWorkflowFixResult(`❌ ${msg}`);
+    } finally {
+      setIsFixingWorkflow(false);
     }
   };
 
@@ -786,6 +864,81 @@ git push -u origin main`;
           ) : (
             /* TROUBLESHOOTING & DIAGNOSTIC ASSISTANT TAB */
             <div className="flex flex-col gap-4">
+
+              {/* Solution for Screenshot Error: "Set up Android SDK" Failed */}
+              <div className="p-4 rounded-2xl bg-gradient-to-b from-red-950/40 to-zinc-900 border border-red-800/70 flex flex-col gap-3 shadow-lg">
+                <div className="flex items-start gap-2.5">
+                  <div className="p-1.5 bg-red-600/20 text-red-400 rounded-lg shrink-0 mt-0.5">
+                    <AlertCircle className="w-4 h-4" />
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="text-white font-bold text-xs">
+                      Fix: "Set up Android SDK" Step Failed (Screenshot Issue)
+                    </h4>
+                    <p className="text-[11px] text-zinc-300 mt-1 leading-relaxed">
+                      GitHub Actions failed because the deprecated <code className="text-red-300 bg-red-950/60 px-1 py-0.5 rounded font-mono">android-actions/setup-android@v3</code> step crashed on Ubuntu runners. Ubuntu runners already come with the official Android 13 SDK pre-installed at <code className="text-emerald-300 bg-zinc-800 px-1 py-0.5 rounded font-mono">/usr/local/lib/android/sdk</code>.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                  <button
+                    onClick={handleFixWorkflowInRepo}
+                    disabled={isFixingWorkflow || !token.trim()}
+                    className="flex-1 py-2 px-3 rounded-xl bg-red-600 hover:bg-red-500 disabled:bg-zinc-800 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all"
+                  >
+                    {isFixingWorkflow ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Applying 1-Click Fix...</span>
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>1-Click Fix & Re-run Build</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={() => handleCopyText(BULLETPROOF_WORKFLOW_YML, 'fixed-workflow')}
+                    className="py-2 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium text-xs flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    {copiedSection === 'fixed-workflow' ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="text-emerald-400">Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copy Fixed YAML</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {workflowFixResult && (
+                  <div className="p-2.5 rounded-xl bg-black font-mono text-[10px] text-zinc-200 border border-zinc-800">
+                    {workflowFixResult}
+                  </div>
+                )}
+
+                {publishedRepo && (
+                  <div className="flex items-center justify-between text-[11px] pt-1 border-t border-zinc-800/80">
+                    <span className="text-zinc-400">Target repo: <strong className="text-white">{publishedRepo.full_name}</strong></span>
+                    <a
+                      href={`${publishedRepo.html_url}/actions`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-400 hover:text-blue-300 flex items-center gap-1 font-medium"
+                    >
+                      <span>Open Actions Tab</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                )}
+              </div>
               
               {/* Diagnostic Card */}
               <div className="p-4 rounded-2xl bg-zinc-900 border border-zinc-800 flex flex-col gap-3">

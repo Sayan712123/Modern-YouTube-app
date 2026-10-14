@@ -14,68 +14,72 @@ jobs:
     name: Build YouTube Android 13 APK
     runs-on: ubuntu-latest
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Java JDK 17 (Android 13 SDK Compatible)
+      - name: Set up Java JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Set up Gradle Build System
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.2'
 
-      - name: Install Web Dependencies
-        run: npm install --legacy-peer-deps --no-audit --no-fund || true
+      - name: Accept Android SDK Licenses
+        run: |
+          mkdir -p $ANDROID_HOME/licenses || true
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> $ANDROID_HOME/licenses/android-sdk-license || true
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" >> $ANDROID_HOME/licenses/android-sdk-preview-license || true
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || true
 
-      - name: Build Web Application
-        run: npm run build || true
-
-      - name: Prepare Android 13 Keystore
+      - name: Prepare Keystore for Signing
         run: |
           mkdir -p android/app
-          keytool -genkeypair -v -keystore android/app/debug.keystore \
-            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass android -keypass android \
-            -dname "CN=YouTube Android 13, OU=Mobile, O=Google, L=MountainView, S=CA, C=US" || true
+          if [ ! -f android/app/debug.keystore ]; then
+            keytool -genkeypair -v -keystore android/app/debug.keystore \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass android -keypass android \
+              -dname "CN=YouTube Android 13, OU=Mobile, O=Google, L=MountainView, S=CA, C=US" || true
+          fi
 
-      - name: Build Android APK with Gradle
+      - name: Build Android 13 APK with Gradle
         run: |
           cd android
-          # Run gradle build
-          gradle assembleDebug --no-daemon --stacktrace || \
-          gradle assembleRelease --no-daemon || \
-          echo "Gradle compilation completed"
+          chmod +x gradlew || true
+          # Build APK
+          if [ -f "./gradlew" ]; then
+            ./gradlew assembleDebug --no-daemon --stacktrace || gradle assembleDebug --no-daemon --stacktrace
+          else
+            gradle assembleDebug --no-daemon --stacktrace
+          fi
 
-      - name: Collect and Name Built APK
+      - name: Collect Output APKs
         run: |
           mkdir -p output-apk
-          # Search for generated APKs
+          # Locate built APK files in build outputs
+          find android/app/build/outputs/apk/ -name "*.apk" -type f -exec cp {} output-apk/YouTube-Android13-API33.apk \; || \
           find android/ -name "*.apk" -type f -exec cp {} output-apk/YouTube-Android13-API33.apk \; || true
           
-          # If gradle built multiple, keep debug and release
-          find android/ -name "*debug*.apk" -type f -exec cp {} output-apk/YouTube-Android13-Debug.apk \; || true
-          find android/ -name "*release*.apk" -type f -exec cp {} output-apk/YouTube-Android13-Release.apk \; || true
-          
-          # Fallback check
-          if [ -z "$(ls -A output-apk/*.apk 2>/dev/null)" ]; then
-            echo "Packaging standalone APK package..."
-            cp -r public output-apk/ || true
-          fi
-          
-          echo "Files ready in output-apk:"
+          # Verification
+          echo "APK build outputs ready in output-apk/:"
           ls -la output-apk/
 
-      - name: Upload Built APK to GitHub Artifacts
+      - name: Upload APK Artifact to GitHub Actions
         uses: actions/upload-artifact@v4
         with:
           name: YouTube-Android13-API33-APK
           path: output-apk/*.apk
           if-no-files-found: warn
 
-      - name: Publish GitHub Release with APK
+      - name: Create GitHub Release with APK
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         continue-on-error: true
@@ -87,8 +91,8 @@ jobs:
             - **Target SDK**: 33 (Android 13)
             - **Min SDK**: 26 (Android 8.0+)
             - **Package**: `com.google.android.youtube.lite`
-            - **Features**: Android 13 Media Controls, Push Notifications, Back Gesture navigation, YouTube Home & Shorts.
-            - **Install**: Download the `.apk` file below and open on your Android 13 device.
+            - **Features**: Android 13 Media Notification Player, Back Gestures, Shorts player.
+            - **Download**: Grab `YouTube-Android13-API33.apk` below!
           files: output-apk/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
