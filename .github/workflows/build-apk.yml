@@ -54,7 +54,6 @@ jobs:
         run: |
           cd android
           chmod +x gradlew || true
-          # Build APK
           if [ -f "./gradlew" ]; then
             ./gradlew assembleDebug --no-daemon --stacktrace || gradle assembleDebug --no-daemon --stacktrace
           else
@@ -64,11 +63,8 @@ jobs:
       - name: Collect Output APKs
         run: |
           mkdir -p output-apk
-          # Locate built APK files in build outputs
           find android/app/build/outputs/apk/ -name "*.apk" -type f -exec cp {} output-apk/YouTube-Android13-API33.apk \; || \
           find android/ -name "*.apk" -type f -exec cp {} output-apk/YouTube-Android13-API33.apk \; || true
-          
-          # Verification
           echo "APK build outputs ready in output-apk/:"
           ls -la output-apk/
 
