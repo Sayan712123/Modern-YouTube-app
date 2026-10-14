@@ -17,6 +17,11 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Set up Java JDK 17
         uses: actions/setup-java@v4
         with:
@@ -31,24 +36,27 @@ jobs:
           echo "d56f5187479451eabf01fb78af6dfcb131a6481e" | sudo tee -a "$ANDROID_HOME/licenses/android-sdk-license" > /dev/null
           sudo chmod -R a+rwX "$ANDROID_HOME"
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.4'
+      - name: Install web dependencies
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Add Capacitor Android shell
+        run: |
+          rm -rf android
+          npm install --no-save --legacy-peer-deps @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
+          npx cap init "YouTube" com.example.youtube --web-dir=dist
+          npx cap add android
+          npx cap sync android
 
       - name: Build Android 13 APK with Gradle
         working-directory: android
-        run: gradle assembleDebug --no-daemon --console=plain
-
-      - name: Collect Output APKs
-        run: |
-          mkdir -p output-apk
-          cp android/app/build/outputs/apk/debug/*.apk output-apk/YouTube-Android13-API33.apk
-          ls -la output-apk
+        run: ./gradlew assembleDebug --no-daemon --console=plain
 
       - name: Upload APK Artifact to GitHub Actions
         uses: actions/upload-artifact@v4
         with:
-          name: YouTube-Android13-API33-APK
-          path: output-apk/*.apk
+          name: YouTube-APK
+          path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
